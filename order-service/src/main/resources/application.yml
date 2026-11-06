@@ -1,0 +1,81 @@
+server:
+  port: 8082
+  # Behind the API Gateway, build Location headers and HATEOAS links from X-Forwarded-*
+  # (the gateway's address), not from this instance's own host:port.
+  forward-headers-strategy: framework
+
+spring:
+  application:
+    name: order-service
+  datasource:
+    # Each service owns its OWN database. No other service connects to it.
+    url: jdbc:h2:mem:orderdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  data:
+    web:
+      pageable:
+        max-page-size: 100
+  cloud:
+    loadbalancer:
+      cache:
+        # Refresh the cached instance list every 5 s so new / stopped instances are noticed quickly (demo value).
+        ttl: 5s
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    registry-fetch-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    # Unique id per instance, so two Product Service instances (8081, 8084) both appear.
+    instance-id: ${spring.application.name}:${server.port}
+    # Demo values: faster heartbeats so registration/eviction is visible within seconds.
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
+
+# Downstream calls. Base URLs use the Eureka service id, resolved by Spring Cloud LoadBalancer.
+order:
+  clients:
+    product:
+      base-url: http://PRODUCT-SERVICE
+      connect-timeout: 1s
+      read-timeout: 2s
+    payment:
+      base-url: http://PAYMENT-SERVICE
+      connect-timeout: 1s
+      read-timeout: 2s
+    payment-circuit-breaker:
+      # Demo values, chosen so the state changes are easy to trigger by hand:
+      # 4 calls in the window, OPEN when 50% fail, try again after 15 s with 2 trial calls.
+      sliding-window-size: 4
+      minimum-number-of-calls: 4
+      failure-rate-threshold: 50
+      wait-duration-in-open-state: 15s
+      permitted-calls-in-half-open-state: 2
+      # Hard limit per call; a bit above the 2 s read timeout.
+      time-limit: 3s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,circuitbreakers,circuitbreakerevents
+  endpoint:
+    health:
+      show-details: always
+  # Circuit breaker state: GET /actuator/circuitbreakers and /actuator/circuitbreakerevents.
+  # (Resilience4j's health indicator targets Spring Boot 3 and does not register on Boot 4.)
+
+springdoc:
+  api-docs:
+    version: openapi_3_1

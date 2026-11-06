@@ -1,0 +1,17 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.log
+# Eclipse
+.classpath
+.project
+.settings/
+.factorypath
+bin/
+# IntelliJ / VS Code
+.idea/
+*.iml
+.vscode/
+# H2 file databases (if ever switched from in-memory)
+*.db
+*.mv.db
+*.trace.db

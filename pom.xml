@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Aggregator POM ONLY.
+  It lets you build/test all five applications with one command:
+      mvnw clean verify
+  Each module still declares spring-boot-starter-parent as its own parent,
+  so every service remains an independent, separately runnable application.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>ecommerce-microservices</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>E-Commerce Microservices (aggregator)</name>
+
+    <modules>
+        <module>eureka-server</module>
+        <module>api-gateway</module>
+        <module>product-service</module>
+        <module>payment-service</module>
+        <module>order-service</module>
+    </modules>
+</project>

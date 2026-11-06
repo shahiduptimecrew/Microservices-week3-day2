@@ -1,0 +1,47 @@
+server:
+  port: 8083
+  # Behind the API Gateway, build Location headers from X-Forwarded-* (the gateway's address).
+  forward-headers-strategy: framework
+
+spring:
+  application:
+    name: payment-service
+  datasource:
+    # Each service owns its OWN database. No other service connects to it.
+    url: jdbc:h2:mem:paymentdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    registry-fetch-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    # Unique id per instance, so two Product Service instances (8081, 8084) both appear.
+    instance-id: ${spring.application.name}:${server.port}
+    # Demo values: faster heartbeats so registration/eviction is visible within seconds.
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    version: openapi_3_1

@@ -1,0 +1,58 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          # Explicit routes: only these paths are exposed to the outside world.
+          # lb://<SERVICE-ID> = ask Eureka for the instances, pick one with Spring Cloud LoadBalancer.
+          routes:
+            - id: product-service
+              uri: lb://PRODUCT-SERVICE
+              predicates:
+                - Path=/api/v1/products/**,/api/v2/products/**
+            - id: order-service
+              uri: lb://ORDER-SERVICE
+              predicates:
+                - Path=/api/v1/orders/**
+            - id: payment-service
+              uri: lb://PAYMENT-SERVICE
+              predicates:
+                - Path=/api/v1/payments/**
+          # Since Spring Cloud Gateway 4.1.x the Forwarded / X-Forwarded-* headers are only added when
+          # trusted-proxies is set (security hardening). The services need these headers to build
+          # Location headers and HATEOAS links that point to the gateway (localhost:8080) instead of
+          # their own host:port. Demo value: trust callers on this machine only.
+          trusted-proxies: 127\.0\.0\.1|0:0:0:0:0:0:0:1|::1
+          httpclient:
+            # Gateway-level timeouts. A route that does not answer within 5 s gets 504.
+            # Must be longer than Order Service's own downstream timeouts (2 s), so that
+            # Order Service can answer with its fallback first.
+            connect-timeout: 2000
+            response-timeout: 5s
+    loadbalancer:
+      cache:
+        # Refresh the cached instance list every 5 s (demo value; default is 35 s).
+        ttl: 5s
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    registry-fetch-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${server.port}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    gateway:
+      access: read-only

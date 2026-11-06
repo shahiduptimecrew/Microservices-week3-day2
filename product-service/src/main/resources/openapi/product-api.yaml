@@ -1,0 +1,307 @@
+openapi: 3.1.0
+info:
+  title: Product Service API (spec-first contract)
+  version: 1.0.0
+  description: |
+    Hand-written contract for the Product Service. This file is the source of truth
+    agreed with API consumers; the code implements it.
+
+    All external calls go through the API Gateway (http://localhost:8080).
+    Errors use RFC 9457 `application/problem+json`.
+servers:
+  - url: http://localhost:8080
+    description: API Gateway (use this)
+  - url: http://localhost:8081
+    description: Product Service instance 1 (direct, for debugging)
+
+tags:
+  - name: products-v1
+  - name: products-v2
+
+paths:
+  /api/v1/products:
+    post:
+      tags: [products-v1]
+      operationId: createProduct
+      summary: Create a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductRequest' }
+            example:
+              sku: TABLET-10
+              name: Tablet 10"
+              description: 10-inch tablet
+              price: 299.00
+              stockQuantity: 25
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              description: URI of the new product
+              schema: { type: string, format: uri }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [products-v1]
+      operationId: listProducts
+      summary: List products (paged)
+      parameters:
+        - name: page
+          in: query
+          description: Zero-based page index
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          description: Page size (capped at 100)
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: sort
+          in: query
+          description: "Property and direction, e.g. `price,desc`. Repeatable."
+          schema: { type: string, default: 'id,asc' }
+      responses:
+        '200':
+          description: One page of products
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/products/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      tags: [products-v1]
+      operationId: getProduct
+      summary: Get one product
+      responses:
+        '200':
+          description: The product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [products-v1]
+      operationId: replaceProduct
+      summary: Replace a product (all fields required, idempotent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductRequest' }
+      responses:
+        '200':
+          description: The updated product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [products-v1]
+      operationId: patchProduct
+      summary: Partially update a product (only the fields sent are changed)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductPatchRequest' }
+            example:
+              price: 949.00
+      responses:
+        '200':
+          description: The updated product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [products-v1]
+      operationId: deleteProduct
+      summary: Delete a product
+      responses:
+        '204': { description: Deleted, no body }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/products/{id}/availability:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      tags: [products-v1]
+      operationId: checkAvailability
+      summary: Check whether a quantity is in stock (used by Order Service)
+      parameters:
+        - name: quantity
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 10000 }
+      responses:
+        '200':
+          description: Availability answer. Not enough stock is `available=false`, not an error.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AvailabilityResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v2/products/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    get:
+      tags: [products-v2]
+      operationId: getProductV2
+      summary: Get one product (v2 representation)
+      responses:
+        '200':
+          description: The product, v2 shape
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductV2Response' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  parameters:
+    ProductId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+          example:
+            type: https://example.com/problems/validation-error
+            title: Validation failed
+            status: 400
+            detail: The request body contains invalid fields
+            instance: /api/v1/products
+            errors:
+              - field: price
+                message: must be greater than or equal to 0.01
+    NotFound:
+      description: Product does not exist
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+          example:
+            type: https://example.com/problems/product-not-found
+            title: Product not found
+            status: 404
+            detail: Product with id 999 was not found
+            instance: /api/v1/products/999
+            productId: 999
+    Conflict:
+      description: Conflicts with current state (duplicate SKU, concurrent update)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+
+  schemas:
+    ProductRequest:
+      type: object
+      required: [sku, name, price, stockQuantity]
+      properties:
+        sku: { type: string, maxLength: 40, pattern: '^[A-Z0-9-]+$' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 1000 }
+        price: { type: number, minimum: 0.01, multipleOf: 0.01 }
+        stockQuantity: { type: integer, minimum: 0 }
+
+    ProductPatchRequest:
+      type: object
+      description: All fields optional; omitted or null fields are left unchanged.
+      properties:
+        sku: { type: string, minLength: 1, maxLength: 40, pattern: '^[A-Z0-9-]+$' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+        price: { type: number, minimum: 0.01, multipleOf: 0.01 }
+        stockQuantity: { type: integer, minimum: 0 }
+
+    ProductResponse:
+      type: object
+      required: [id, sku, name, price, stockQuantity, createdAt, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        price: { type: number }
+        stockQuantity: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ProductPage:
+      type: object
+      required: [content, page, size, totalElements, totalPages, first, last]
+      properties:
+        content:
+          type: array
+          items: { $ref: '#/components/schemas/ProductResponse' }
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+        totalPages: { type: integer }
+        first: { type: boolean }
+        last: { type: boolean }
+
+    AvailabilityResponse:
+      type: object
+      required: [productId, requestedQuantity, availableQuantity, available, unitPrice]
+      properties:
+        productId: { type: integer, format: int64 }
+        requestedQuantity: { type: integer }
+        availableQuantity: { type: integer }
+        available: { type: boolean }
+        unitPrice: { type: number }
+
+    ProductV2Response:
+      type: object
+      required: [id, sku, name, price, stock]
+      properties:
+        id: { type: integer, format: int64 }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        price:
+          type: object
+          required: [amount, currency]
+          properties:
+            amount: { type: number }
+            currency: { type: string, examples: [EUR] }
+        stock:
+          type: object
+          required: [quantity, inStock]
+          properties:
+            quantity: { type: integer }
+            inStock: { type: boolean }
+
+    ProblemDetail:
+      type: object
+      description: RFC 9457 problem details. Extra properties (errors, productId, sku) may be present.
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string, format: uri-reference }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+      additionalProperties: true

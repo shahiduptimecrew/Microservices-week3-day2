@@ -1,0 +1,523 @@
+{
+  "info": {
+    "name": "E-Commerce Microservices (teaching demo)",
+    "description": "Run the folders in order. All business calls go through the API Gateway ({{baseUrl}}). Each request has tests that check the expected status code, so 'Run collection' doubles as a smoke test. Import together with ecommerce-local.postman_environment.json and select that environment.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 Discovery and gateway",
+      "item": [
+        {
+          "name": "Eureka - registered instances",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{eurekaUrl}}/eureka/apps"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const apps = pm.response.json().applications.application.map(a => a.name);",
+            "pm.test('all services registered', () => ['API-GATEWAY','PRODUCT-SERVICE','ORDER-SERVICE','PAYMENT-SERVICE'].forEach(n => pm.expect(apps).to.include(n)));"
+          ] } }]
+        },
+        {
+          "name": "Gateway - route table",
+          "request": { "method": "GET", "url": "{{baseUrl}}/actuator/gateway/routes" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('3 routes', () => pm.expect(pm.response.json().length).to.eql(3));"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "01 Products (CRUD, paging, validation, versioning)",
+      "item": [
+        {
+          "name": "List products - page, size, sort",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/products?page=0&size=3&sort=price,desc" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const body = pm.response.json();",
+            "pm.test('page of 3', () => pm.expect(body.content.length).to.eql(3));",
+            "pm.test('sorted by price desc', () => pm.expect(body.content[0].price).to.be.at.least(body.content[1].price));"
+          ] } }]
+        },
+        {
+          "name": "Create product - 201 + Location",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": [
+              "pm.environment.set('sku', 'TAB-' + Date.now());"
+            ] } },
+            { "listen": "test", "script": { "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.test('Location header points to the gateway', () => pm.expect(pm.response.headers.get('Location')).to.include('/api/v1/products/'));",
+              "pm.environment.set('productId', pm.response.json().id);"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Tablet 10\\\"\",\n  \"description\": \"10-inch tablet\",\n  \"price\": 299.00,\n  \"stockQuantity\": 25\n}" },
+            "url": "{{baseUrl}}/api/v1/products"
+          }
+        },
+        {
+          "name": "Get product",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/products/{{productId}}" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));"
+          ] } }]
+        },
+        {
+          "name": "Replace product (PUT) - all fields",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Tablet Pro\",\n  \"description\": \"10-inch tablet, 256 GB\",\n  \"price\": 349.00,\n  \"stockQuantity\": 20\n}" },
+            "url": "{{baseUrl}}/api/v1/products/{{productId}}"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('name replaced', () => pm.expect(pm.response.json().name).to.eql('Tablet Pro'));"
+          ] } }]
+        },
+        {
+          "name": "Patch product - price only",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"price\": 249.00\n}" },
+            "url": "{{baseUrl}}/api/v1/products/{{productId}}"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('price changed, name kept', () => { pm.expect(pm.response.json().price).to.eql(249); pm.expect(pm.response.json().name).to.eql('Tablet Pro'); });"
+          ] } }]
+        },
+        {
+          "name": "Availability - enough stock",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/products/{{productId}}/availability?quantity=5" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('available', () => pm.expect(pm.response.json().available).to.be.true);"
+          ] } }]
+        },
+        {
+          "name": "Availability - not enough stock (still 200)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/products/1/availability?quantity=11" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK - a valid answer, not an error', () => pm.response.to.have.status(200));",
+            "pm.test('not available', () => pm.expect(pm.response.json().available).to.be.false);"
+          ] } }]
+        },
+        {
+          "name": "Get product v2 - new representation",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v2/products/{{productId}}" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('price is an object with currency', () => pm.expect(pm.response.json().price.currency).to.eql('EUR'));"
+          ] } }]
+        },
+        {
+          "name": "Duplicate SKU - 409",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Copy\",\n  \"price\": 1.00,\n  \"stockQuantity\": 1\n}" },
+            "url": "{{baseUrl}}/api/v1/products"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+            "pm.test('problem+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json'));"
+          ] } }]
+        },
+        {
+          "name": "Validation error - 400 with all fields",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sku\": \"bad sku\",\n  \"name\": \"\",\n  \"price\": -1\n}" },
+            "url": "{{baseUrl}}/api/v1/products"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+            "pm.test('4 field errors', () => pm.expect(pm.response.json().errors.length).to.eql(4));"
+          ] } }]
+        },
+        {
+          "name": "Invalid sort property - 400",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/products?sort=foo" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+          ] } }]
+        },
+        {
+          "name": "Delete product - 204",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/v1/products/{{productId}}" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('204 No Content', () => pm.response.to.have.status(204));"
+          ] } }]
+        },
+        {
+          "name": "Get deleted product - 404",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/products/{{productId}}" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+            "pm.test('problem+json', () => pm.expect(pm.response.json().title).to.eql('Product not found'));"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "02 Load balancing",
+      "item": [
+        {
+          "name": "Get product 1 - send several times, watch X-Served-By",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/products/1" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "console.log('Served by', pm.response.headers.get('X-Served-By'), 'request id', pm.response.headers.get('X-Request-Id'));",
+            "pm.test('X-Served-By header present', () => pm.expect(pm.response.headers.get('X-Served-By')).to.match(/:\\d+$/));"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "03 Orders, idempotency, HATEOAS",
+      "item": [
+        {
+          "name": "Create order - 201 (new Idempotency-Key)",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": [
+              "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+            ] } },
+            { "listen": "test", "script": { "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const order = pm.response.json();",
+              "pm.test('CONFIRMED and paid', () => { pm.expect(order.status).to.eql('CONFIRMED'); pm.expect(order.paymentStatus).to.eql('SUCCESS'); });",
+              "pm.test('HATEOAS links', () => ['self','orders','product','payment'].forEach(r => pm.expect(order._links).to.have.property(r)));",
+              "pm.test('not a replay', () => pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('false'));",
+              "pm.environment.set('orderId', order.id);",
+              "pm.environment.set('paymentOperationId', order.paymentOperationId);"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 2,\n  \"quantity\": 3\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          }
+        },
+        {
+          "name": "Repeat same request (client retry) - replayed, no new order",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 2,\n  \"quantity\": 3\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('201 again (stored result)', () => pm.response.to.have.status(201));",
+            "pm.test('Idempotent-Replayed: true', () => pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true'));",
+            "pm.test('same order id', () => pm.expect(pm.response.json().id).to.eql(Number(pm.environment.get('orderId'))));"
+          ] } }]
+        },
+        {
+          "name": "Same key, different body - 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 2,\n  \"quantity\": 4\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('409 Conflict', () => pm.response.to.have.status(409));"
+          ] } }]
+        },
+        {
+          "name": "Missing Idempotency-Key - 400",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 2,\n  \"quantity\": 1\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+          ] } }]
+        },
+        {
+          "name": "Out of stock (product 5) - 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 5,\n  \"quantity\": 1\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+            "pm.test('insufficient stock', () => pm.expect(pm.response.json().title).to.eql('Insufficient stock'));"
+          ] } }]
+        },
+        {
+          "name": "Unknown product - 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 999,\n  \"quantity\": 1\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+          ] } }]
+        },
+        {
+          "name": "Get order - HAL with links",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/orders/{{orderId}}" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('no retry-payment link on a CONFIRMED order', () => pm.expect(pm.response.json()._links).to.not.have.property('retry-payment'));"
+          ] } }]
+        },
+        {
+          "name": "List orders - HAL page",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/orders?page=0&size=5" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('_embedded.orders and page metadata', () => { pm.expect(pm.response.json()._embedded.orders).to.be.an('array'); pm.expect(pm.response.json().page).to.have.property('totalElements'); });"
+          ] } }]
+        },
+        {
+          "name": "Payment of the order (by operationId)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/payments?operationId={{paymentOperationId}}" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('exactly one payment', () => pm.expect(pm.response.json().length).to.eql(1));"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "04 Payments (operationId deduplication)",
+      "item": [
+        {
+          "name": "Process payment - 201",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": [
+              "pm.environment.set('manualOperationId', 'manual-' + Date.now());"
+            ] } },
+            { "listen": "test", "script": { "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.environment.set('paymentId', pm.response.json().id);"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"operationId\": \"{{manualOperationId}}\",\n  \"orderId\": 9999,\n  \"amount\": 10.00\n}" },
+            "url": "{{baseUrl}}/api/v1/payments"
+          }
+        },
+        {
+          "name": "Same operationId again - 200, same payment, not charged twice",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"operationId\": \"{{manualOperationId}}\",\n  \"orderId\": 9999,\n  \"amount\": 10.00\n}" },
+            "url": "{{baseUrl}}/api/v1/payments"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK (duplicate)', () => pm.response.to.have.status(200));",
+            "pm.test('same payment id', () => pm.expect(pm.response.json().id).to.eql(Number(pm.environment.get('paymentId'))));"
+          ] } }]
+        },
+        {
+          "name": "Same operationId, different amount - 409",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"operationId\": \"{{manualOperationId}}\",\n  \"orderId\": 9999,\n  \"amount\": 99.00\n}" },
+            "url": "{{baseUrl}}/api/v1/payments"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('409 Conflict', () => pm.response.to.have.status(409));"
+          ] } }]
+        },
+        {
+          "name": "Get payment",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/payments/{{paymentId}}" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "05 Resilience (failure modes, circuit breaker)",
+      "description": "Run these one by one, not with the collection runner: the circuit breaker needs 15 s in OPEN before it tries again.",
+      "item": [
+        {
+          "name": "Failure mode -> DECLINE",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"DECLINE\"\n}" },
+            "url": "{{baseUrl}}/api/v1/payments/test/failure-mode"
+          }
+        },
+        {
+          "name": "Create order while card is declined - FAILED",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 2,\n  \"quantity\": 1\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('201 Created', () => pm.response.to.have.status(201));",
+            "pm.test('order FAILED, payment FAILED', () => { pm.expect(pm.response.json().status).to.eql('FAILED'); pm.expect(pm.response.json().paymentStatus).to.eql('FAILED'); });"
+          ] } }]
+        },
+        {
+          "name": "Failure mode -> ERROR (provider down)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"ERROR\"\n}" },
+            "url": "{{baseUrl}}/api/v1/payments/test/failure-mode"
+          }
+        },
+        {
+          "name": "Create order while provider is down - PENDING (send 3-4 times)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 2,\n  \"quantity\": 1\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('201 Created', () => pm.response.to.have.status(201));",
+            "const order = pm.response.json();",
+            "pm.test('PENDING, never paid', () => pm.expect(order.status).to.eql('PENDING'));",
+            "pm.test('retry-payment link offered', () => pm.expect(order._links).to.have.property('retry-payment'));",
+            "console.log(order.failureReason);",
+            "pm.environment.set('pendingOrderId', order.id);"
+          ] } }]
+        },
+        {
+          "name": "Circuit breaker state (Order Service actuator)",
+          "request": { "method": "GET", "url": "{{orderServiceUrl}}/actuator/circuitbreakers" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "console.log('payment circuit breaker:', pm.response.json().circuitBreakers.payment.state);"
+          ] } }]
+        },
+        {
+          "name": "Circuit breaker events",
+          "request": { "method": "GET", "url": "{{orderServiceUrl}}/actuator/circuitbreakerevents" }
+        },
+        {
+          "name": "Failure mode -> NONE (provider recovered)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"NONE\"\n}" },
+            "url": "{{baseUrl}}/api/v1/payments/test/failure-mode"
+          }
+        },
+        {
+          "name": "Retry payment of the PENDING order (after 15 s) - CONFIRMED",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/orders/{{pendingOrderId}}/retry-payment" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('CONFIRMED', () => pm.expect(pm.response.json().status).to.eql('CONFIRMED'));"
+          ] } }]
+        },
+        {
+          "name": "Failure mode -> SLOW 3000 ms (timeout demo)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"SLOW\",\n  \"delayMs\": 3000\n}" },
+            "url": "{{baseUrl}}/api/v1/payments/test/failure-mode"
+          }
+        },
+        {
+          "name": "Create order while provider is slow - PENDING after 2 s",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": 2,\n  \"quantity\": 1\n}" },
+            "url": "{{baseUrl}}/api/v1/orders"
+          },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('PENDING (timeout)', () => pm.expect(pm.response.json().status).to.eql('PENDING'));",
+            "pm.environment.set('pendingOrderId', pm.response.json().id);",
+            "pm.environment.set('paymentOperationId', pm.response.json().paymentOperationId);"
+          ] } }]
+        },
+        {
+          "name": "Payments for that order - provider finished late (1 stored)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/payments?operationId={{paymentOperationId}}" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('exactly one payment', () => pm.expect(pm.response.json().length).to.eql(1));"
+          ] } }]
+        },
+        {
+          "name": "Retry payment - CONFIRMED, still one payment",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/orders/{{pendingOrderId}}/retry-payment" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('CONFIRMED', () => pm.expect(pm.response.json().status).to.eql('CONFIRMED'));"
+          ] } }]
+        },
+        {
+          "name": "Failure mode -> NONE (reset)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"NONE\"\n}" },
+            "url": "{{baseUrl}}/api/v1/payments/test/failure-mode"
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 Gateway errors",
+      "item": [
+        {
+          "name": "Unknown route - 404 problem+json from the gateway",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/nothing-here" },
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+            "pm.test('problem+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json'));"
+          ] } }]
+        }
+      ]
+    }
+  ]
+}
